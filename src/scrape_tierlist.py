@@ -2,6 +2,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 from bs4 import BeautifulSoup
 import csv
 import time
@@ -9,11 +10,27 @@ import time
 def open_url(url, d):
     print(url)
     d.get(url)
+
+    #now we need to load the div by scrolling down
+    body = d.find_element(By.CSS_SELECTOR, 'body')
+    for i in range(4):
+        body.send_keys(Keys.PAGE_DOWN)
+
+    
+    classname = "ItemSetSelector_panel__l6y-U"
     WebDriverWait(driver, 10).until(EC.presence_of_element_located(\
-        (By.CLASS_NAME, "Wrapper_medium__pU6D8")))
+        (By.CLASS_NAME, classname)))
     print("found")
-    first_items = driver.find_element(By.XPATH, "//*[@id='root']/div[6]/div[10]/div[13]/div[2]/div")
-    print(first_items)
+
+    
+    
+    first_items = driver.find_element(By.CLASS_NAME, classname)
+    print(classname)
+
+    divs = first_items.find_elements(By.CSS_SELECTOR, "div")
+    for div in divs:
+        print(div.get_attribute("class"))
+        print("div found")
 
 driver = webdriver.Chrome()
 driver.set_window_position(2000, 100)
@@ -60,6 +77,7 @@ for href in hrefs:
     break
     
 driver.close()
+driver.quit()
 file.close()
 
 
