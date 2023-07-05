@@ -6,9 +6,43 @@ from selenium.webdriver.common.keys import Keys
 from bs4 import BeautifulSoup
 import csv
 import time
+from datetime import datetime
+import math
 
 start_time = time.time()
-url = "https://lolalytics.com/lol/tierlist/?tier=master_plus"
+print(datetime.now())
+URL_P = "https://lolalytics.com/lol/tierlist/"
+URL_M = "https://lolalytics.com/lol/tierlist/?tier=master_plus"
+URL_Supp = "https://lolalytics.com/lol/tierlist/?lane=support&tier=master_plus"
+
+
+#starting parameters
+
+mode = "2 items"
+url = URL_M
+patch = '13.13'
+
+rank = ''
+if url == URL_P:
+    rank = "_Platinum+"
+elif url == URL_M:
+    rank = "_Master+"
+elif url == URL_Supp:
+    rank = "_Supp_M+"
+
+rank_array = ['Item 1', 'Item 2']
+if mode=="2 items":
+    dataID = "5"
+elif mode=="3 items":
+    dataID = "6"
+    rank_array.append('Item 3')
+elif mode=="4 items":
+    dataID = "7"
+    rank_array.append('Item 3')
+    rank_array.append('Item 4')
+elif mode=="support":
+    print("support") #TODO add "support"
+
 itemID = { #items missing an alt value
   "4644": "Crown of the Shattered Queen",
   "4645": "Shadowflame",
@@ -16,9 +50,9 @@ itemID = { #items missing an alt value
   "3119": "Winter's Approach",
   "8001": "Anathema's Chains",
   "6696": "Axiom Arc",
-  "8020": "Abyssal Mask"
+  "8020": "Abyssal Mask",
+  "6620": "Echoes of Helia"
 }
-
 
 def open_url(url, d, writer):
     d.get(url)
@@ -31,26 +65,29 @@ def open_url(url, d, writer):
     body = d.find_element(By.CSS_SELECTOR, 'body')
     for i in range(4):
         body.send_keys(Keys.PAGE_DOWN)
-        time.sleep(1/10)
-        
+
+    #grab champ name and role
     WebDriverWait(d, 10).until(EC.presence_of_element_located(\
         (By.CLASS_NAME, classname)))
-    champName = d.title.split("Build")[0][:-1] #TODO get role too
+    champName = d.title.split("Build")[0][:-1]
     role = d.find_element(By.CLASS_NAME, "NavChamp_wrapper__bc-VX").text
+    if role == "support" and rank != "_Supp_M+":
+        return
 
+    #select dataset
     buttons = d.find_elements(By.CLASS_NAME, buttonHeading)[0].find_elements(\
         By.CSS_SELECTOR, "div")
     for div in buttons:
-        if div.get_attribute("data-id") == "5":
+        if div.get_attribute("data-id") == dataID:
             button = div
     button.click()
     
-    
+    #populate csv
     itemData = d.find_element(By.CLASS_NAME, classname)
     itemSets = itemData.find_elements(By.CLASS_NAME, "CellSet_wrapper__bbETk")
     for itemSet in itemSets:
         pr = itemSet.find_element(By.CLASS_NAME,"CellSet_pick__6I6VT").text
-        if(float(pr) >= 1):
+        if(float(pr) >= 0):
             items = itemSet.find_elements(By.CLASS_NAME,"Item_item48br__H8miU")
             i = []
             for item in items:
@@ -60,31 +97,41 @@ def open_url(url, d, writer):
                     if itemName is None:
                         print(item.get_attribute("data-id"))
                         itemName = ""
+                elif itemName == "Abyssal Mask" and item.get_attribute("data-id") == "3001": #for some reason this is misnamed
+                    itemName = "Evenshroud"
+                elif itemName == "Sanguine Blade" and item.get_attribute("data-id") == "3181":
+                    itemName = "Hullbreaker"
                 i = i+[itemName]
             if "Mejai's Soulstealer" not in i:
                 numbers = itemSet.text.split("\n")
                 if isinstance(numbers[2],str): #games has a comma
                     numbers[2] = int(numbers[2].replace(',',''))
-                
-                writer.writerow([champName, role, numbers[0], numbers[1], numbers[2],\
-                                 i[0], i[1]])
+                weighted_wr = (float(numbers[0])*float(numbers[2])/(float(numbers[2])+5))-50 #discourage winrates below 50%
+                weighted_pr = math.log(float(numbers[1])+1, 2)
+                weighted_games = math.log(float(numbers[2])+1, 2)
+                weight = round(weighted_wr * weighted_pr * weighted_games*100)
+                toWrite = [champName, role]+i+numbers+[str(weight)]
+                writer.writerow(toWrite)
 
 
 driver = webdriver.Chrome()
 driver.set_window_position(2000, 100)
 
-file = open("TierlistPatch13.9.csv", 'w', newline='')
-file2 = open("builds13.9.csv", 'w', newline='')
+
+    
+file = open("Tierlist"+patch+rank+".csv", 'w', newline='')
+file2 = open("builds"+patch+rank+".csv", 'w', newline='')
 writer = csv.writer(file)
 
 #write header rows
 writer.writerow(['Champion Name', 'Win rate', 'Pick Rate'])
 
+
 driver.get(url)
 WebDriverWait(driver, 10).until(EC.presence_of_element_located(\
     (By.CLASS_NAME, "ListRow_name__b5btO")))
 
-#List of attributes that are getting scrapped.
+#List of attributes that are getting scraped.
 name=[]
 winRate=[]
 pickRate=[]
@@ -105,7 +152,6 @@ for row in soup.find('div', 'TierList_list__j33gd').find_all('div', recursive=Fa
     br = columns[9].text #ban rate
     games = columns[10].text #games
 
-    #print(f'{e} - {f} - {g} - {h}')
     writer.writerow([name, wr, pr])
 
 classname = columns[1]['class'][0]
@@ -117,19 +163,19 @@ for href in hrefs:
     hrefs2 = hrefs2 + [href.get_attribute("href")]
 
 writer = csv.writer(file2)
-writer.writerow(['Name', 'Role', 'Win rate', 'Pick Rate', 'Games', 'Item 1', 'Item 2'])
+
+writer.writerow(['Name', 'Role'] + rank_array + ['Win rate', 'Pick Rate', 'Games', 'Weight','last run:', datetime.now()]) 
 for href in hrefs2:
     open_url(href, driver, writer)
-
-#TODO sort the CSV once written (or before writing)
-#TODO combine this sheet with one which considers the same build, but extrapolated
-#TODO standard requests module
-#TODO timestamp on sheet
 
 driver.close()
 driver.quit()
 file.close()
 file2.close()
 
-print("--- %s seconds ---" % (time.time() - start_time))
+print("--- %s seconds ---" % round(time.time() - start_time))
 
+#TODO sort the CSV once written (or before writing)
+#TODO combine this sheet with one which considers the same build, but extrapolated
+#TODO standard requests module
+#TODO timestamp and other info on sheet
