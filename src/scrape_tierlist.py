@@ -24,14 +24,35 @@ first_item = "/html/body/div/div[6]/div[10]/div[13]/div[2]"
 
 #items missing an alt value
 itemID = { 
-  "4644": "Crown of the Shattered Queen",
-  "4645": "Shadowflame",
-  "3161": "Spear of Shojin",
-  "3119": "Winter's Approach",
-  "8001": "Anathema's Chains",
-  "6696": "Axiom Arc",
-  "8020": "Abyssal Mask",
-  "6620": "Echoes of Helia"
+  "4644": "crown of the Shattered Queen",
+  "4645": "shadowflame",
+  "3161": "spear of Shojin",
+  "3119": "winter's Approach",
+  "8001": "anathema's Chains",
+  "6696": "axiom Arc",
+  "8020": "abyssal Mask",
+  "6620": "echoes of Helia",
+  #S14 items
+  #"": "",
+  "6610": "sundered sky",
+  "3073": "experimental hexplate",
+  "3302": "terminus",
+  "6699": "voltaic cyclosword",
+  "4646": "stormsurge",
+  "3137": "cryptbloom",
+  "3118": "malignance",
+  "6701": "opportunity",
+  "6697": "hubris",
+  "3002": "trailblazer",
+  "3876": "solstice sleigh",
+  "3869": "celestial opposition",
+  "2502": "unending despair",
+  "3877": "bloodsong",
+  "2504": "kaenic rookern",
+  "3870": "dream maker",
+  "3871": "zazzaks realmspike",
+  "6621": "dawncore",
+  "6698": "profane hydra"
 }
 
 def main(lanes, tier, patch):
@@ -68,7 +89,7 @@ def write_to_file(patch, tier, all_data):
     if number_items >3:
         rank_array.append('Item 4')
     
-    writer.writerow(['Name', 'Role'] + rank_array + ['Win rate', 'Pick Rate', 'Games', 'Weight','last run:', datetime.now()])
+    writer.writerow(['Name', 'Role'] + rank_array + ['Win rate', 'Pick Rate', 'Games', 'Weight','last run:', datetime.now().strftime("%Y-%m-%d %H:%M:%S")+' EST'])
     for champ in all_data:
         for build in champ:
             writer.writerow(build)
@@ -126,9 +147,13 @@ def extract_data_one_item(href, d):
                 print(i_n.get_attribute("data-id"))
                 itemName = ""
         elif itemName == "Abyssal Mask" and i_n.get_attribute("data-id") == "3001": #for some reason this is misnamed
-            itemName = "Evenshroud"
+            itemName = "evenshroud"
         elif itemName == "Sanguine Blade" and i_n.get_attribute("data-id") == "3181":
-            itemName = "Hullbreaker"
+            itemName = "hullbreaker"
+        elif itemName == "Luden's Tempest" and i_n.get_attribute("data-id") == "6655":
+            itemName = "ludens companion"
+        elif itemName == "Liandry's Anguish" and i_n.get_attribute("data-id") == "6653":
+            itemName = "liandrys torment"
 
         numbers = item.text.split("\n")
         del numbers[3]
@@ -166,7 +191,13 @@ def extract_data_champ(href, d):
     for div in buttons:
         if div.get_attribute("data-id") == dataID:
             button = div
-    button.click()
+    while(1):
+        try:
+            button.click()
+            break
+        except:
+            print(champName)
+            time.sleep(1)
 
     champ_data = []
     #grab data
@@ -189,12 +220,17 @@ def extract_data_champ(href, d):
                 if len(itemName) < 1:
                     itemName = itemID.get(item.get_attribute("data-id"))
                     if itemName is None:
+                        print(champName)
                         print(item.get_attribute("data-id"))
                         itemName = ""
                 elif itemName == "Abyssal Mask" and item.get_attribute("data-id") == "3001": #for some reason this is misnamed
-                    itemName = "Evenshroud"
+                    itemName = "evenshroud"
                 elif itemName == "Sanguine Blade" and item.get_attribute("data-id") == "3181":
-                    itemName = "Hullbreaker"
+                    itemName = "hullbreaker"
+                elif itemName == "Luden's Tempest" and item.get_attribute("data-id") == "6655":
+                    itemName = "ludens companion"
+                elif itemName == "Liandry's Anguish" and item.get_attribute("data-id") == "6653":
+                    itemName = "liandrys torment"
                 i = i+[itemName]
             numbers = itemSet.text.split("\n")
             if isinstance(numbers[2],str): # might contain comma, must be removed
@@ -233,7 +269,7 @@ if __name__ == "__main__":
     
     Label(popup, text="patch").pack()
     ent = Entry(popup)
-    ent.insert(0, "13.24")
+    ent.insert(0, "14.1")
     ent.pack()
 
     varList = varList + [IntVar()] 
@@ -253,7 +289,7 @@ if __name__ == "__main__":
     patch = "_"+ent.get()
     tier = TIER[varList[5].get()]
     BASE_URL = BASE_URL + "patch=" + ent.get()+"&"
-    number_items = varList[6].get() + 2 #done this way to ensure default value
+    number_items = varList[6].get() + 2 #done this way to ensure default value is 2
     popup.destroy()
     print(lanes)
     print(tier)
