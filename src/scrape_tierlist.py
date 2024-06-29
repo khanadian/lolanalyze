@@ -6,25 +6,25 @@ from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 from tkinter import *
-import csv
+import pandas as pd
 import time
 from datetime import datetime
 import math
+import concurrent.futures
+import xlsxwriter as xls
 
 
-BASE_URL = "https://lolalytics.com/lol/tierlist/?"
+BASE_URL = "https://www.lolalytics.com/lol/tierlist/?"
 
 #lane options
 L_ALL = ['top', 'jungle', 'middle', 'bottom', 'support']
 
 #tiers
-TIER = ['',"tier=master_plus","tier=challenger"]
-
-first_item = "/html/body/div/div[6]/div[10]/div[13]/div[2]"
+TIER = ['tier=emerald_plus',"tier=d2_plus","tier=grandmaster_plus"]
 
 #items missing an alt value
 itemID = { 
-  "4644": "crown of the Shattered Queen",
+  #"4644": "crown of the Shattered Queen",
   "4645": "shadowflame",
   "3161": "spear of Shojin",
   "3119": "winter's Approach",
@@ -52,249 +52,346 @@ itemID = {
   "3870": "dream maker",
   "3871": "zazzaks realmspike",
   "6621": "dawncore",
-  "6698": "profane hydra"
+  "6698": "profane hydra",
+  #S14 S2
+  "2503": "blackfire torch",
+  "3032": "yun tal wildarrows",
+  "2501": "overlords bloodmail"
 }
 
-def main(lanes, tier, patch):
+def main(lanes, tiers, patch, numItems):
+    
     driver = webdriver.Chrome(ChromeDriverManager().install())
     driver.set_window_position(2000, 100)
     driver.maximize_window()
+##
+##    all_data = []
+##    for lane in lanes:
+##        url = BASE_URL+"lane="+lane+"&"+tier
+##        all_data = all_data + extract_data_role(url, driver)
 
-    all_data = []
-    for lane in lanes:
-        url = BASE_URL+"lane="+lane+"&"+tier
-        all_data = all_data + extract_data_role(url, driver)
-
+    all_data = {}
+    for t in tiers:
+        
+        tiered_data = []
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        futures = []
+        for lane in lanes:
+            url = BASE_URL+"lane="+lane+"&"+t
+            futures.append(executor.submit(extract_data_role, url, numItems, driver))
+        for future in concurrent.futures.as_completed(futures):
+            tiered_data = future.result() + tiered_data 
+        all_data[t] = tiered_data
+    write_to_file(patch, all_data, numItems)
     driver.close()
     driver.quit()
 
-    write_to_file(patch, tier, all_data)
+def write_to_file(patch, all_data, numItems):
 
-def write_to_file(patch, tier, all_data):
-    if tier == TIER[1]:
-        rank = "_Master+"
-    elif tier == TIER[2]:
-        rank = "_Chall"
-    else:
-        rank = "_Emerald+"
-
-    file = open("builds"+patch+rank+"_"+str(number_items)+"_items.csv", 'w', newline='')
-    writer = csv.writer(file)
+    workbook  = xls.Workbook("builds"+patch+".xlsx")
     
-    rank_array = ['Item 1']
-    if number_items >1:
-        rank_array.append('Item 2')
-    if number_items >2:
-        rank_array.append('Item 3')
-    if number_items >3:
-        rank_array.append('Item 4')
+    rank_array = ['Item 1', 'Item 2', 'Item 3', 'Item 4']
+    for tier in all_data:
+        dict = {}
+        if tier == TIER[1]:
+            rank = "_D2+"
+        elif tier == TIER[2]:
+            rank = "_GM+"
+        else:
+            rank = "_Emerald+"
+        for champ in all_data[tier]:
+            for builds in champ:
+                num = builds[0]
+                for build in builds[1:]:
+                    if num in dict:
+                        dict[num].append(build)
+                    else:
+                        dict[num] = [build]
+        for num in dict:
+            name = patch+rank+"_"+num+"items"
+            worksheet = workbook.add_worksheet(name)
+            n = int(num)
+            arr1 = ['Name', 'Role']
+            arr2 = rank_array[0:n]
+            arr3 = ['Win rate', 'Pick Rate', 'Games', 'Weight','last run:', datetime.now().strftime("%Y-%m-%d %H:%M:%S")+' EST'] 
+            arr1 = arr1 + arr2 + arr3
+            worksheet.write_row(0,0,arr1)
+            counter = 1
+            for build in dict[num]:
+                build[n+2] = float(build[n+2])
+                build[n+3] = float(build[n+3])
+                build[n+4] = float(build[n+4])
+                build[n+5] = float(build[n+5])
+                worksheet.write_row(counter, 0, build)
+                counter+=1
+    workbook.close()
+
+def extract_data_role(url, numItems, driver):
     
-    writer.writerow(['Name', 'Role'] + rank_array + ['Win rate', 'Pick Rate', 'Games', 'Weight','last run:', datetime.now().strftime("%Y-%m-%d %H:%M:%S")+' EST'])
-    for champ in all_data:
-        for build in champ:
-            writer.writerow(build)
-
-    file.close()
-
-def extract_data_role(url, driver):
+##    driver = webdriver.Chrome(ChromeDriverManager().install())
+##    driver.set_window_position(2000, 100)
+##    driver.maximize_window()
     driver.get(url)
     WebDriverWait(driver, 10).until(EC.presence_of_element_located(\
-    (By.CLASS_NAME, "ListRow_name__b5btO")))
+    (By.XPATH, "/html/body/main/div[6]/div[3]")))
+    
+    body = driver.find_element(By.CSS_SELECTOR, 'body')
+    for i in range(6):
+        body.send_keys(Keys.PAGE_DOWN)
+        time.sleep(1)
     
     hrefs = []
     role_data =[]
     #2 loops because otherwise the hrefs are lost after going into the first link
-    for href in driver.find_elements(By.CSS_SELECTOR, ".ListRow_name__b5btO a"):
-        hrefs = hrefs + [href.get_attribute("href")]
-
+    for element in driver.find_elements(By.XPATH, "//a[@href]")[13:-1]:
+        build_link = element.get_attribute("href")
+        if build_link not in hrefs and "/build/" in build_link:
+            hrefs.append(build_link)
         
     for href in hrefs:
-        if number_items == 1:
-            champ_data = extract_data_one_item(href, driver)
-        else:
-            champ_data = extract_data_champ(href, driver)
-        role_data = role_data + [champ_data]
+        try:
+            champ_data = extract_data_champ(href, driver, numItems)
+            role_data.append(champ_data)
+        except Exception as error:
+            print(href)
+            print(error)
+            
+##    driver.close()
+##    driver.quit()
     return role_data
 
-def extract_data_one_item(href, d):
+    
+def extract_data_champ(href, d, numItems):
+    first_item = "/html/body/main/div[6]/div[1]/div[16]/div[2]/div"
+    
     d.get(href)
-    classname = "PanelSet_data__nAnQM"
-    buttonHeading = "ItemSetSelector_setheadings__9mUvH"
     WebDriverWait(d, 20).until(EC.presence_of_element_located(\
-        (By.CLASS_NAME, "ItemSets_placeholder__QROSH")))
+        (By.CLASS_NAME, "_wrapper_hthxe_1")))
     #now we need to load the div by scrolling down
     body = d.find_element(By.CSS_SELECTOR, 'body')
     for i in range(3):
         body.send_keys(Keys.PAGE_DOWN)
-
     #grab champ name and role
-    WebDriverWait(d, 10).until(EC.presence_of_element_located(\
-        (By.CLASS_NAME, classname)))
-    champName = d.title.split("Build")[0][:-1]
-    role = d.find_element(By.CLASS_NAME, "NavChamp_wrapper__bc-VX").text
+    role = d.title.split("for ")[1].split()[0]
+    champName = d.title.split(role + " ")[1]
     
-    champ_data = []
-    #grab data
-    itemData = d.find_elements(By.XPATH, first_item)
-    items = itemData[0].find_elements(By.CLASS_NAME,"Cell_cell__383UV")
-    i = []
-    for item in items:
-        i_n = item.find_element(By.CLASS_NAME, "Item_item48br__H8miU")
-        itemName = i_n.get_attribute("alt")
-        if len(itemName) < 1:
-            itemName = itemID.get(i_n.get_attribute("data-id"))
-            if itemName is None:
-                print(i_n.get_attribute("data-id"))
-                itemName = ""
-        elif itemName == "Abyssal Mask" and i_n.get_attribute("data-id") == "3001": #for some reason this is misnamed
-            itemName = "evenshroud"
-        elif itemName == "Sanguine Blade" and i_n.get_attribute("data-id") == "3181":
-            itemName = "hullbreaker"
-        elif itemName == "Luden's Tempest" and i_n.get_attribute("data-id") == "6655":
-            itemName = "ludens companion"
-        elif itemName == "Liandry's Anguish" and i_n.get_attribute("data-id") == "6653":
-            itemName = "liandrys torment"
-
-        numbers = item.text.split("\n")
-        del numbers[3]
-        if isinstance(numbers[2],str): # might contain comma, must be removed
-            numbers[2] = int(numbers[2].replace(',',''))
-        weighted_wr = (float(numbers[0])*float(numbers[2])/(float(numbers[2])+5))-50 #discourage winrates below 50%
-        weighted_pr = math.log(float(numbers[1])+1, 2)
-        weighted_games = math.log(float(numbers[2])+1, 2)
-        weight = round(weighted_wr * weighted_pr * weighted_games*100)
-        champ_data = champ_data +[[champName, role]+[itemName]+numbers+[str(weight)]]
-
-    return champ_data
-    
-def extract_data_champ(href, d):
-    d.get(href)
-    classname = "PanelSet_data__nAnQM"
-    buttonHeading = "ItemSetSelector_setheadings__9mUvH"
-    WebDriverWait(d, 20).until(EC.presence_of_element_located(\
-        (By.CLASS_NAME, "ItemSets_placeholder__QROSH")))
-    #now we need to load the div by scrolling down
-    body = d.find_element(By.CSS_SELECTOR, 'body')
-    for i in range(3):
-        body.send_keys(Keys.PAGE_DOWN)
-
-    #grab champ name and role
-    WebDriverWait(d, 10).until(EC.presence_of_element_located(\
-        (By.CLASS_NAME, classname)))
-    champName = d.title.split("Build")[0][:-1]
-    role = d.find_element(By.CLASS_NAME, "NavChamp_wrapper__bc-VX").text
-
     #select dataset
-    dataID = str(number_items+3)
-    buttons = d.find_elements(By.CLASS_NAME, buttonHeading)[0].find_elements(\
-        By.CSS_SELECTOR, "div")
-    for div in buttons:
-        if div.get_attribute("data-id") == dataID:
-            button = div
-    while(1):
-        try:
-            button.click()
-            break
-        except:
-            print(champName)
-            time.sleep(1)
-
-    champ_data = []
-    #grab data
-    found = False
-    while not found:
-        try:
-            itemData = d.find_element(By.CLASS_NAME, classname)
-            found = True
-        except NoSuchElementException:
-            print(champName)
-            time.sleep(1)
-    itemSets = itemData.find_elements(By.CLASS_NAME, "CellSet_wrapper__bbETk")
-    for itemSet in itemSets:
-        pr = itemSet.find_element(By.CLASS_NAME,"CellSet_pick__6I6VT").text
-        if(float(pr) >= 0):#may be needed in future
-            items = itemSet.find_elements(By.CLASS_NAME,"Item_item48br__H8miU")
+    all_data = []
+    for num in numItems:
+        champ_data = []
+        if num == 1:
+            WebDriverWait(d, 10).until(EC.presence_of_element_located(\
+        (By.XPATH, first_item)))
+            itemData = d.find_element(By.XPATH, first_item)
+            items = itemData.find_elements(By.CSS_SELECTOR,"div")
             i = []
             for item in items:
-                itemName = item.get_attribute("alt")
+                try:
+                    i_n = item.find_element(By.CSS_SELECTOR, "a span img")
+                except:
+                    continue
+                itemName = i_n.get_attribute("alt")
                 if len(itemName) < 1:
-                    itemName = itemID.get(item.get_attribute("data-id"))
+                    if i_n.get_attribute("data-id") is None:
+                        print("no data id?")
+                        continue
+                    itemName = itemID.get(i_n.get_attribute("data-id")[2:])
                     if itemName is None:
-                        print(champName)
-                        print(item.get_attribute("data-id"))
+                        print(i_n.get_attribute("data-id"))
                         itemName = ""
-                elif itemName == "Abyssal Mask" and item.get_attribute("data-id") == "3001": #for some reason this is misnamed
-                    itemName = "evenshroud"
-                elif itemName == "Sanguine Blade" and item.get_attribute("data-id") == "3181":
+                if itemName == "Mejai's Soulstealer":
+                    break
+                elif itemName == "Abyssal Mask" and i_n.get_attribute("data-id") == "3001": #for some reason this is misnamed
+                    itemName = "ABABBABABAB"
+                elif itemName == "Sanguine Blade" and i_n.get_attribute("data-id") == "3181":
                     itemName = "hullbreaker"
-                elif itemName == "Luden's Tempest" and item.get_attribute("data-id") == "6655":
+                elif itemName == "Luden's Tempest" and i_n.get_attribute("data-id") == "6655":
                     itemName = "ludens companion"
-                elif itemName == "Liandry's Anguish" and item.get_attribute("data-id") == "6653":
+                elif itemName == "Liandry's Anguish" and i_n.get_attribute("data-id") == "6653":
                     itemName = "liandrys torment"
-                i = i+[itemName]
-            numbers = itemSet.text.split("\n")
-            if isinstance(numbers[2],str): # might contain comma, must be removed
-                numbers[2] = int(numbers[2].replace(',',''))
-            weighted_wr = (float(numbers[0])*float(numbers[2])/(float(numbers[2])+5))-50 #discourage winrates below 50%
-            weighted_pr = math.log(float(numbers[1])+1, 2)
-            weighted_games = math.log(float(numbers[2])+1, 2)
-            weight = round(weighted_wr * weighted_pr * weighted_games*100)
-            champ_data = champ_data +[[champName, role]+i+numbers+[str(weight)]]
+                elif itemName == "Turbo Chemtank" and i_n.get_attribute("data-id") == "6664":
+                    itemName = "hollow radiance"
+                numbers = item.text.split("\n")
+                if len(numbers) == 4:
+                    del numbers[3]
+                if isinstance(numbers[2],str): # might contain comma, must be removed
+                    numbers[2] = int(numbers[2].replace(',',''))
+                weighted_wr = (float(numbers[0])*float(numbers[2])/(float(numbers[2])+5))-50 #discourage winrates below 50%
+                weighted_pr = math.log(float(numbers[1])+1, 2)
+                weighted_games = math.log(float(numbers[2])+1, 2)
+                weight = round(weighted_wr * weighted_pr * weighted_games*100)
+                champ_data.append([champName, role]+[itemName]+numbers+[str(weight)])
         else:
-            return champ_data
-    return champ_data
+            while(1):
+                try:
+                    button = d.find_element(By.XPATH, "//div[@data-type='a_"+str(num)+"']")
+                    button.click()
+                    break
+                except:
+                    print(champName)
+                    d.execute_script('window.scrollBy(0, -100)')
+                    time.sleep(1)
+            #time.sleep(2) #TODO find a proper fix
+            #grab data
+            found = False
+            while not found:
+                try:
+                    itemData = d.find_elements(By.XPATH, "//div[@class='cursor-grab overflow-x-scroll']")[1]
+                    itemData = itemData.find_element(By.CSS_SELECTOR, "div")
+                    found = True
+                except:
+                    print(champName)
+                    time.sleep(1)
+            try:
+                itemSets = itemData.find_elements(By.CSS_SELECTOR, "div")
+            except:
+                print("error finding itemsets")
+            for itemSet in itemSets:
+                while(1):
+                    try:
+                        items = itemSet.find_elements(By.CSS_SELECTOR, "span img")
+                        break
+                    except:
+                        print("error getting item")
+                        time.sleep(1)
+                if len(items) == 0:
+                    continue
+                i = []
+                
+                for item in items:
+                    itemName = item.get_attribute("alt")
+                    try:
+                        dataID = item.get_attribute("data-id")
+                        if len(itemName) < 1:
+                            if dataID is None:
+                                print("no data id?")
+                                continue
+                            itemName = itemID.get(item.get_attribute("data-id")[2:])
+                            if itemName is None:
+                                print(champName)
+                                print(item.get_attribute("data-id"))
+                                itemName = ""
+                        elif itemName == "Abyssal Mask" and item.get_attribute("data-id") == "3001": #for some reason this is misnamed
+                            itemName = "ABABABBABAB"
+                        elif itemName == "Sanguine Blade" and item.get_attribute("data-id") == "3181":
+                            itemName = "hullbreaker"
+                        elif itemName == "Luden's Tempest" and item.get_attribute("data-id") == "6655":
+                            itemName = "ludens companion"
+                        elif itemName == "Liandry's Anguish" and item.get_attribute("data-id") == "6653":
+                            itemName = "liandrys torment"
+                    except:
+                        print("no dataID?")
+                        if len(itemName) < 1:
+                            itemName = "unknown"
+                    #print(itemName)
+                    i = i+[itemName]
+                numbers = itemSet.text.split("\n")
+                if isinstance(numbers[2],str): # might contain comma, must be removed
+                    numbers[2] = int(numbers[2].replace(',',''))
+                weighted_wr = (float(numbers[0])*float(numbers[2])/(float(numbers[2])+5))-50 #discourage winrates below 50%
+                weighted_pr = math.log(float(numbers[1])+1, 2)
+                weighted_games = math.log(float(numbers[2])+1, 2)
+                weight = round(weighted_wr * weighted_pr * weighted_games*100)
+                champ_data.append([champName, role]+i+numbers+[str(weight)])
+        all_data.append([str(num)]+champ_data)
+    print(champName)
+    return all_data
 
+def select_all():
+    lb.select_set(0, END)
+def clear_all():
+    lb.selection_clear(0, END)
+def select_all2():
+    lb2.select_set(0, END)
+def clear_all2():
+    lb2.selection_clear(0, END)
+def select_all3():
+    lb3.select_set(0, END)
+def clear_all3():
+    lb3.selection_clear(0, END)
 
+def man(url):
+    driver = webdriver.Chrome(ChromeDriverManager().install())
+    driver.set_window_position(2000, 100)
+    driver.maximize_window()
+    driver.get(url)
+
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located(\
+        (By.XPATH, "//a[@href]")))
+
+    dupe = False
+    for element in driver.find_elements(By.XPATH, "//a[@href]")[13:-1]:
+        if not dupe:
+            print(element.get_attribute("href"))
+        dupe = not dupe
+        
+    driver.close()
+    driver.quit()
+    
 if __name__ == "__main__":
     start_time = time.time()
     print(datetime.now())
-    global number_items
     lanes = []
+    tiers = []
+    numItems = []
 
     #popup window
     popup = Tk()
-    varList = []
     t = []
-    Label(popup, text="Lane").pack()
-    for index in range(0,len(L_ALL)):
-        varList = varList+[IntVar()]
-        t = t + [Checkbutton(popup, text=L_ALL[index], variable=varList[index], onvalue=1, offvalue=0)]
-        t[index].pack()
-
-    varList = varList + [IntVar()]
-    Label(popup, text="tier").pack()
-    Radiobutton(text="Emerald+", variable = varList[5], value = 0).pack()
-    Radiobutton(text="Master+", variable = varList[5], value = 1).pack()
-    Radiobutton(text="Challenger", variable = varList[5], value = 2).pack()
     
-    Label(popup, text="patch").pack()
+    Label(popup, text="Lane").pack()
+    lb = Listbox(popup, selectmode=MULTIPLE, height=len(L_ALL),exportselection = False)
+    for i in range(len(L_ALL)):
+        lb.insert(i, L_ALL[i])
+    lb.pack()
+    Button(popup, text='select all', command=select_all).pack()
+    Button(popup, text='clear', command=clear_all).pack()
+    
+
+    Label(popup, text="Tier").pack()
+    
+    lb2 = Listbox(popup, selectmode=MULTIPLE, height=len(TIER),exportselection = False)
+    for i in range(len(TIER)):
+        lb2.insert(i, TIER[i][5:])
+    lb2.pack()
+    Button(popup, text='select all', command=select_all2).pack()
+    Button(popup, text='clear', command=clear_all2).pack()
+    
+    Label(popup, text="Patch").pack()
     ent = Entry(popup)
-    ent.insert(0, "14.1")
+    ent.insert(0, "14.13")
     ent.pack()
 
-    varList = varList + [IntVar()] 
-    Label(popup, text="Items").pack()
-    Radiobutton(text="2", variable = varList[6], value = 0).pack()
-    Radiobutton(text="3", variable = varList[6], value = 1).pack()
+    Label(popup, text="# Items").pack()
+    lb3 = Listbox(popup, selectmode=MULTIPLE, height=3,exportselection = False)
+    for i in range(3):
+        lb3.insert(END, i+1)
+    lb3.pack()
+    Button(popup, text='select all', command=select_all3).pack()
+    Button(popup, text='clear', command=clear_all3).pack()
     #this is an improper way of allowing the entry text without saving it
     ok = Button(popup, text='OK', command = popup.quit)
     ok.pack()
     popup.mainloop()
+    
+    for i in lb.curselection():
+        lanes.append(lb.get(i))
 
-    for index in range(0, 5):
-        if varList[index].get() > 0:
-            lanes = lanes + [L_ALL[index]]
+    for i in lb2.curselection():
+        tiers.append("tier="+lb2.get(i))
+
+    for i in lb3.curselection():
+        numItems.append(lb3.get(i))
 
 
     patch = "_"+ent.get()
-    tier = TIER[varList[5].get()]
     BASE_URL = BASE_URL + "patch=" + ent.get()+"&"
-    number_items = varList[6].get() + 2 #done this way to ensure default value is 2
     popup.destroy()
     print(lanes)
-    print(tier)
     print(patch)
-    print(number_items)
-    main(lanes, tier, patch)
+    print(tiers)
+    print(numItems)
+    main(lanes, tiers, patch, numItems)
+    
     print("--- %s seconds ---" % (time.time() - start_time))
     
